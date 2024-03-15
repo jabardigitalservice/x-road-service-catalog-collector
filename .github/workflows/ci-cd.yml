@@ -24,3 +24,67 @@ jobs:
           fetch-depth: 0
       - name: Lint with flake8
         run: flake8
+  venv:
+    name: Virtual Environment
+    if:
+      github.ref_type == 'tag' ||
+      github.event_name == 'pull_request' ||
+      contains('refs/heads/main refs/heads/develop', github.ref) ||
+      startsWith(github.ref, 'refs/heads/release/') ||
+      startsWith(github.ref, 'refs/heads/hotfix/')
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Cache venv
+        id: cache-python-venv
+        uses: actions/cache@v3
+        with:
+          path: venv/
+          key: python-venv
+      - name: Set up Python
+        if: steps.cache-python-venv.outputs.cache-hit != 'true'
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.8'
+      - name: Install dependencies
+        if: steps.cache-python-venv.outputs.cache-hit != 'true'
+        run: |
+          python -m venv venv/
+          . venv/bin/activate
+          pip install --upgrade pip
+          pip install toml build 'coverage[toml]' httpx
+          python -c 'import toml; c = toml.load("pyproject.toml"); print("\n".join([*c["project"].get("dependencies", []), *[row for optional_dependency in c["project"].get("optional-dependencies", {}).values() for row in optional_dependency]]))' > /tmp/requirements.txt
+          pip install -r /tmp/requirements.txt
+  unittest:
+    name: Unit Test
+    needs: venv
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Cache venv
+        uses: actions/cache@v3
+        with:
+          path: venv/
+          key: python-venv
+      - name: Activate venv
+        run: |
+          . venv/bin/activate
+          echo PATH=$PATH >> $GITHUB_ENV
+      - name: Install package
+        run: pip install '.[restful-api]'
+      - name: Test
+        run: python -m coverage run -m unittest
+      - name: Display test coverage
+        run: python -m coverage report -m
+      - name: Upload coverage reports to Codecov
+        uses: codecov/codecov-action@v3
+        env:
+          CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
+      - name: Test coverage must be 100% passed!
+        run: if [ $(printf '%.0f' $(python -m coverage report | awk '$1 == "TOTAL" {print $NF+0}')) = 100 ]; then exit; else exit 1; fi
